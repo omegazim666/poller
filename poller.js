@@ -16,25 +16,31 @@ client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
   const serverId = message.guild.id;
-  const serverDataFile = path.join(__dirname, `${serverId}_serverdata.txt`);
+  const serverDataFile = path.join(__dirname, `${serverId}_serverdata.json`);
 
   if (!fs.existsSync(serverDataFile)) {
-    fs.writeFileSync(serverDataFile, JSON.stringify({ voteOptions: [], pollDuration: 60 }));
+    fs.writeFileSync(serverDataFile, JSON.stringify({ voteOptions: [], pollDuration: 60, maps: [], mapVoteEnabled: true, mapVoteDuration: 45 }));
   }
 
   let serverData = JSON.parse(fs.readFileSync(serverDataFile));
 
-  let { voteOptions, pollDuration } = serverData;
+  let { voteOptions, pollDuration, maps, mapVoteEnabled, mapVoteDuration } = serverData;
 
   if (!Array.isArray(voteOptions)) {
-    voteOptions = []; // Initialize as empty array if not already an array
+    voteOptions = [];
     serverData.voteOptions = voteOptions;
+    fs.writeFileSync(serverDataFile, JSON.stringify(serverData));
+  }
+
+  if (!Array.isArray(maps)) {
+    maps = [];
+    serverData.maps = maps;
     fs.writeFileSync(serverDataFile, JSON.stringify(serverData));
   }
 
   if (message.content.startsWith('!voteserver')) {
     console.log('Trigger text detected. Starting poll...');
-    await createPoll(message, voteOptions, pollDuration);
+    await createPoll(message, voteOptions, pollDuration, maps, mapVoteEnabled, mapVoteDuration);
   } else if (message.content.startsWith('!votetime')) {
     if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
       message.channel.send('You do not have access to this command.');
@@ -113,6 +119,14 @@ client.on('messageCreate', async (message) => {
       .setColor('#0099ff')
       .setTitle('Vote commands')
       .setDescription(`
+	  \`!enablemapvote\` (enable map voting)
+	  \`!disablemapvote\` (disable map voting)
+	  \`!addmap\` (Add map to vote list)
+	  \`!delmap number\` (using number from !listmaps)
+	  \`!maplist\` (List maps loaded for voting)
+	  \`!mapvotetime number\` (sets the map vote time in seconds)
+      \`!votetime number\` (sets the server vote time in seconds)
+      \`!listvotes\` (shows vote servers loaded)
       \`!votetime number\` (sets the vote time in seconds)
       \`!listvotes\` (shows vote servers loaded)
       \`!delvote number\` (using number from !listvotes)
@@ -122,6 +136,85 @@ client.on('messageCreate', async (message) => {
       `);
 
     message.channel.send({ embeds: [helpEmbed] });
+  } else if (message.content.startsWith('!addmap')) {
+    if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
+      message.channel.send('You do not have access to this command.');
+      return;
+    }
+
+    const args = message.content.split(' ');
+    const mapName = args.slice(1).join(' ');
+
+    if (mapName) {
+      maps.push(mapName);
+      serverData.maps = maps;
+      fs.writeFileSync(serverDataFile, JSON.stringify(serverData));
+      message.channel.send(`Added map: ${mapName}`);
+    } else {
+      message.channel.send('Please provide a map name.');
+    }
+  } else if (message.content.startsWith('!delmap')) {
+    if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
+      message.channel.send('You do not have access to this command.');
+      return;
+    }
+
+    const args = message.content.split(' ');
+    const index = parseInt(args[1], 10) - 1;
+
+    if (!isNaN(index) && index >= 0 && index < maps.length) {
+      const removedMap = maps.splice(index, 1)[0];
+      serverData.maps = maps;
+      fs.writeFileSync(serverDataFile, JSON.stringify(serverData));
+      message.channel.send(`Removed map: ${removedMap}`);
+    } else {
+      message.channel.send('Please provide a valid number corresponding to the map.');
+    }
+  } else if (message.content.startsWith('!maplist')) {
+    listMaps(message, maps);
+  } else if (message.content.startsWith('!mapvotetime')) {
+    if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
+      message.channel.send('You do not have access to this command.');
+      return;
+    }
+
+    const args = message.content.split(' ');
+    const newMapVoteDuration = parseInt(args[1], 10);
+
+    if (!isNaN(newMapVoteDuration) && newMapVoteDuration > 0) {
+      mapVoteDuration = newMapVoteDuration;
+      serverData.mapVoteDuration = mapVoteDuration;
+      fs.writeFileSync(serverDataFile, JSON.stringify(serverData));
+      message.channel.send(`Map vote duration set to ${mapVoteDuration} seconds.`);
+    } else {
+      message.channel.send('Please provide a valid number of seconds for the map vote duration.');
+    }
+  } else if (message.content.startsWith('!disablemapvote')) {
+    if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
+      message.channel.send('You do not have access to this command.');
+      return;
+    }
+
+    if (!serverData.mapVoteEnabled) {
+      message.channel.send('Map vote is already disabled.');
+    } else {
+      serverData.mapVoteEnabled = false;
+      fs.writeFileSync(serverDataFile, JSON.stringify(serverData));
+      message.channel.send('Map vote is now disabled.');
+    }
+  } else if (message.content.startsWith('!enablemapvote')) {
+    if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
+      message.channel.send('You do not have access to this command.');
+      return;
+    }
+
+    if (serverData.mapVoteEnabled) {
+      message.channel.send('Map vote is already enabled.');
+    } else {
+      serverData.mapVoteEnabled = true;
+      fs.writeFileSync(serverDataFile, JSON.stringify(serverData));
+      message.channel.send('Map vote is now enabled.');
+    }
   }
 });
 
@@ -135,7 +228,17 @@ function listVotes(message, voteOptions) {
   message.channel.send(`Current vote options:\n${voteList}`);
 }
 
-async function createPoll(message, voteOptions, pollDuration) {
+function listMaps(message, maps) {
+  if (maps.length === 0) {
+    message.channel.send('No maps available.');
+    return;
+  }
+
+  const mapList = maps.map((map, index) => `${index + 1}. ${map}`).join('\n');
+  message.channel.send(`Current maps:\n${mapList}`);
+}
+
+async function createPoll(message, voteOptions, pollDuration, maps, mapVoteEnabled, mapVoteDuration) {
   console.log('createPoll function called!');
 
   const pollEmbed = new MessageEmbed()
@@ -192,6 +295,66 @@ async function createPoll(message, voteOptions, pollDuration) {
     message.channel.send(winningAnnouncement);
 
     message.channel.send(`${winningOption.emoji} Server IP: ${winningOption.address}`);
+
+    // Initiate map voting if enabled
+    if (mapVoteEnabled) {
+      console.log('Starting map voting...');
+
+      const mapPollEmbed = new MessageEmbed()
+        .setColor('#0099ff')
+        .setTitle(`<a:ut_spin:708486726934331403>  Map Vote ${mapVoteDuration} seconds to vote!  <a:netscape:655578717736796181>`)
+        .setDescription(`React with the corresponding emoji to vote for your preferred map.`)
+        .addFields(maps.map((map, index) => ({ name: `Map ${index + 1}`, value: `React with ${String.fromCodePoint(127462 + index)} for ${map}` })));
+
+      const mapSentMessage = await message.channel.send({ content: 'Map vote is now live!', embeds: [mapPollEmbed] });
+      console.log('Map vote message sent.');
+
+      // React with emojis for map voting
+      for (let i = 0; i < maps.length; i++) {
+        await mapSentMessage.react(String.fromCodePoint(127462 + i));
+      }
+
+      console.log(`Map vote will close in ${mapVoteDuration} seconds.`);
+
+      // Wait for the map vote duration
+      await new Promise(resolve => setTimeout(resolve, mapVoteDuration * 1000));
+
+      const mapReactions = mapSentMessage.reactions.cache;
+
+      // Fetch and count map votes, excluding bot reactions
+      const mapVotes = await Promise.all(maps.map(async (map, index) => {
+        const reaction = mapReactions.get(String.fromCodePoint(127462 + index));
+        if (reaction) {
+          const users = await reaction.users.fetch();
+          return { map, count: users.filter(user => !user.bot).size };
+        } else {
+          return { map, count: 0 };
+        }
+      }));
+
+      console.log('Map Votes:', mapVotes);
+
+      const maxMapVotes = Math.max(...mapVotes.map(vote => vote.count));
+      const tiedMaps = mapVotes.filter(vote => vote.count === maxMapVotes).map(vote => vote.map);
+
+      console.log('Tied maps:', tiedMaps);
+
+      let winningMap;
+      if (tiedMaps.length === 1) {
+        winningMap = tiedMaps[0];
+      } else if (tiedMaps.length > 1) {
+        const randomMapIndex = Math.floor(Math.random() * tiedMaps.length);
+        winningMap = tiedMaps[randomMapIndex];
+        message.channel.send('🎲 Maps tied, using random selection.');
+      }
+
+      if (winningMap) {
+        const mapAnnouncement = `<:winston:1178434656807440424> The winning map is: ${winningMap}`;
+        message.channel.send(mapAnnouncement);
+      } else {
+        message.channel.send('No valid map option found. Map vote could not determine a winner.');
+      }
+    }
   } else {
     message.channel.send('No valid poll option found. Poll could not determine a winner.');
   }
