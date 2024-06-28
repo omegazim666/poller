@@ -105,6 +105,7 @@ async function startBot() {
           .setColor('#0099ff')
           .setTitle('Vote commands')
           .setDescription(`
+          \`!votetime number\` (sets the vote timeout in seconds)
           \`!listvotes\` (shows vote servers loaded)
           \`!delvote number\` (using number from !listvotes)
           \`!addvote name flag address\`
