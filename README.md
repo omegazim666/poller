@@ -9,7 +9,7 @@ After a 60 second time delay the poll will close and the bot will send a query r
 You need to give yourself the role "Poller" to be able to manage the bot. <br />
 
 Bot Commands: <br />
- !votehelp (display this menu)
+ !votehelp (display this menu) <br />
  !enablemapvote (enable map voting) <br />
  !disablemapvote (disable map voting) <br />
  !addmap (Add map to vote list) <br />
