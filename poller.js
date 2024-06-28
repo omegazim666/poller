@@ -4,134 +4,125 @@ const path = require('path');
 const { Client, Intents, MessageEmbed } = require('discord.js');
 const client = new Client({ intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES] });
 
-let pollDuration = 60; // Default poll duration in seconds
-
 client.on('debug', console.log);
 
-async function startBot() {
-  try {
-    await client.login(process.env.BOT_TOKEN);
-    console.log('Bot is online!');
-    
-    client.once('ready', () => {
-      console.log('Bot is ready!');
-    });
-    
-    client.on('messageCreate', async (message) => {
-      if (message.author.bot) return;
+client.login(process.env.BOT_TOKEN);
 
-      const serverId = message.guild.id;
-      const serverDataFile = path.join(__dirname, `${serverId}_serverdata.txt`);
+client.once('ready', () => {
+  console.log('Bot is online!');
+});
 
-      if (!fs.existsSync(serverDataFile)) {
-        fs.writeFileSync(serverDataFile, JSON.stringify([]));
-      }
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
 
-      let voteOptions = JSON.parse(fs.readFileSync(serverDataFile));
+  const serverId = message.guild.id;
+  const serverDataFile = path.join(__dirname, `${serverId}_serverdata.txt`);
 
-      if (message.content.startsWith('!voteserver')) {
-        console.log('Trigger text detected. Starting poll...');
-        await createPoll(message, voteOptions);
-      } else if (message.content.startsWith('!votetime')) {
-        if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
-          message.channel.send('You do not have access to this command.');
-          return;
-        }
-
-        const args = message.content.split(' ');
-        const newDuration = parseInt(args[1], 10);
-
-        if (!isNaN(newDuration) && newDuration > 0) {
-          pollDuration = newDuration;
-          message.channel.send(`Poll duration set to ${pollDuration} seconds.`);
-        } else {
-          message.channel.send('Please provide a valid number of seconds for the poll duration.');
-        }
-      } else if (message.content.startsWith('!addvote')) {
-        if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
-          message.channel.send('You do not have access to this command.');
-          return;
-        }
-
-        const args = message.content.split(' ');
-        const name = args.slice(1, -2).join(' ');
-        const emoji = args[args.length - 2];
-        const address = args[args.length - 1];
-
-        if (name && emoji && address) {
-          voteOptions.push({ name, emoji, address });
-          fs.writeFileSync(serverDataFile, JSON.stringify(voteOptions));
-          message.channel.send(`Added vote option: ${name} ${emoji} ${address}`);
-        } else {
-          message.channel.send('Please provide the name, emoji, and address in the correct format.');
-        }
-      } else if (message.content.startsWith('!removevote')) {
-        if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
-          message.channel.send('You do not have access to this command.');
-          return;
-        }
-
-        const args = message.content.split(' ');
-        const name = args.slice(1).join(' ');
-
-        const optionIndex = voteOptions.findIndex(option => option.name === name);
-        if (optionIndex !== -1) {
-          voteOptions.splice(optionIndex, 1);
-          fs.writeFileSync(serverDataFile, JSON.stringify(voteOptions));
-          message.channel.send(`Removed vote option: ${name}`);
-        } else {
-          message.channel.send('Vote option not found.');
-        }
-      } else if (message.content.startsWith('!listvotes')) {
-        listVotes(message, voteOptions);
-      } else if (message.content.startsWith('!delvote')) {
-        if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
-          message.channel.send('You do not have access to this command.');
-          return;
-        }
-
-        const args = message.content.split(' ');
-        const index = parseInt(args[1], 10) - 1;
-
-        if (!isNaN(index) && index >= 0 && index < voteOptions.length) {
-          const removedOption = voteOptions.splice(index, 1)[0];
-          fs.writeFileSync(serverDataFile, JSON.stringify(voteOptions));
-          message.channel.send(`Removed vote option: ${removedOption.name}`);
-        } else {
-          message.channel.send('Please provide a valid number corresponding to the vote option.');
-        }
-      } else if (message.content.startsWith('!votehelp')) {
-        const helpEmbed = new MessageEmbed()
-          .setColor('#0099ff')
-          .setTitle('Vote commands')
-          .setDescription(`
-          \`!votetime number\` (sets the vote timeout in seconds)
-          \`!listvotes\` (shows vote servers loaded)
-          \`!delvote number\` (using number from !listvotes)
-          \`!addvote name flag address\`
-          example \`!addvote ip4 - USA 🇺🇸 unreal://us2.gibblets.com:7777?password=gibblets2023\`
-          `)
-          .setFooter('Use Unicode for Flags');
-
-        message.channel.send({ embeds: [helpEmbed] });
-      }
-    });
-
-    client.on('error', async (error) => {
-      console.error('Client error occurred:', error);
-      await restartBot();
-    });
-  } catch (error) {
-    console.error('Error occurred during login:', error);
-    await restartBot();
+  if (!fs.existsSync(serverDataFile)) {
+    fs.writeFileSync(serverDataFile, JSON.stringify({ voteOptions: [], pollDuration: 60 }));
   }
-}
 
-async function restartBot() {
-  console.log('Restarting bot...');
-  await client.destroy();
-  await startBot();
-}
+  let serverData = JSON.parse(fs.readFileSync(serverDataFile));
+
+  let { voteOptions, pollDuration } = serverData;
+
+  if (!Array.isArray(voteOptions)) {
+    voteOptions = []; // Initialize as empty array if not already an array
+    serverData.voteOptions = voteOptions;
+    fs.writeFileSync(serverDataFile, JSON.stringify(serverData));
+  }
+
+  if (message.content.startsWith('!voteserver')) {
+    console.log('Trigger text detected. Starting poll...');
+    await createPoll(message, voteOptions, pollDuration);
+  } else if (message.content.startsWith('!votetime')) {
+    if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
+      message.channel.send('You do not have access to this command.');
+      return;
+    }
+
+    const args = message.content.split(' ');
+    const newDuration = parseInt(args[1], 10);
+
+    if (!isNaN(newDuration) && newDuration > 0) {
+      pollDuration = newDuration;
+      serverData.pollDuration = pollDuration;
+      fs.writeFileSync(serverDataFile, JSON.stringify(serverData));
+      message.channel.send(`Poll duration set to ${pollDuration} seconds.`);
+    } else {
+      message.channel.send('Please provide a valid number of seconds for the poll duration.');
+    }
+  } else if (message.content.startsWith('!addvote')) {
+    if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
+      message.channel.send('You do not have access to this command.');
+      return;
+    }
+
+    const args = message.content.split(' ');
+    const name = args.slice(1, -2).join(' ');
+    const emoji = args[args.length - 2];
+    const address = args[args.length - 1];
+
+    if (name && emoji && address) {
+      voteOptions.push({ name, emoji, address });
+      serverData.voteOptions = voteOptions;
+      fs.writeFileSync(serverDataFile, JSON.stringify(serverData));
+      message.channel.send(`Added vote option: ${name} ${emoji} ${address}`);
+    } else {
+      message.channel.send('Please provide the name, emoji, and address in the correct format.');
+    }
+  } else if (message.content.startsWith('!removevote')) {
+    if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
+      message.channel.send('You do not have access to this command.');
+      return;
+    }
+
+    const args = message.content.split(' ');
+    const name = args.slice(1).join(' ');
+
+    const optionIndex = voteOptions.findIndex(option => option.name === name);
+    if (optionIndex !== -1) {
+      voteOptions.splice(optionIndex, 1);
+      serverData.voteOptions = voteOptions;
+      fs.writeFileSync(serverDataFile, JSON.stringify(serverData));
+      message.channel.send(`Removed vote option: ${name}`);
+    } else {
+      message.channel.send('Vote option not found.');
+    }
+  } else if (message.content.startsWith('!listvotes')) {
+    listVotes(message, voteOptions);
+  } else if (message.content.startsWith('!delvote')) {
+    if (!message.member.roles.cache.some(role => role.name === 'Poller')) {
+      message.channel.send('You do not have access to this command.');
+      return;
+    }
+
+    const args = message.content.split(' ');
+    const index = parseInt(args[1], 10) - 1;
+
+    if (!isNaN(index) && index >= 0 && index < voteOptions.length) {
+      const removedOption = voteOptions.splice(index, 1)[0];
+      serverData.voteOptions = voteOptions;
+      fs.writeFileSync(serverDataFile, JSON.stringify(serverData));
+      message.channel.send(`Removed vote option: ${removedOption.name}`);
+    } else {
+      message.channel.send('Please provide a valid number corresponding to the vote option.');
+    }
+  } else if (message.content.startsWith('!votehelp')) {
+    const helpEmbed = new MessageEmbed()
+      .setColor('#0099ff')
+      .setTitle('Vote commands')
+      .setDescription(`
+      \`!listvotes\` (shows vote servers loaded)
+      \`!delvote number\` (using number from !listvotes)
+      \`!addvote name flag address\`
+      example \`!addvote ip4 - USA 🇺🇸 unreal://us2.gibblets.com:7777?password=gibblets2023\`
+      Use Unicode for Flags
+      `);
+
+    message.channel.send({ embeds: [helpEmbed] });
+  }
+});
 
 function listVotes(message, voteOptions) {
   if (voteOptions.length === 0) {
@@ -143,7 +134,7 @@ function listVotes(message, voteOptions) {
   message.channel.send(`Current vote options:\n${voteList}`);
 }
 
-async function createPoll(message, voteOptions) {
+async function createPoll(message, voteOptions, pollDuration) {
   console.log('createPoll function called!');
 
   const pollEmbed = new MessageEmbed()
@@ -204,6 +195,3 @@ async function createPoll(message, voteOptions) {
     message.channel.send('No valid poll option found. Poll could not determine a winner.');
   }
 }
-
-// Start the bot
-startBot();
